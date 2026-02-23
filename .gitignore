@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+*.csv
+!discovered_leads.csv
+!analyzed_leads.csv
+!final_outreach_list.csv
