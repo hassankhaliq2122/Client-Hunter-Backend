@@ -1,171 +1,151 @@
+import sys
 import os
 import csv
-from fastapi import FastAPI, HTTPException
+import json
+import logging
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-# Proper package imports
-from client_hunter import phase_a_discovery
-from client_hunter import phase_b_analyzer
-from client_hunter import phase_c_outreach
+# Configure Logging for Production
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Robust Path Handling
+# This ensures that whether we are local or in a container, we find the core logic
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CLIENT_HUNTER_DIR = os.path.join(BASE_DIR, "client_hunter")
+sys.path.append(CLIENT_HUNTER_DIR)
+
+logger.info(f"Production Startup: BASE_DIR resolved to {BASE_DIR}")
+logger.info(f"Production Startup: CLIENT_HUNTER_DIR resolved to {CLIENT_HUNTER_DIR}")
+
+try:
+    import phase_a_discovery
+    import phase_b_analyzer
+    import phase_c_outreach
+    logger.info("Core hunter modules imported successfully.")
+except ImportError as e:
+    logger.error(f"CRITICAL: Failed to import hunter modules. Check sys.path. Error: {e}")
 
 app = FastAPI()
 
-# ==============================
-# CORS (Production Safe)
-# ==============================
+# Enable CORS for production (Explicitly allow Netlify)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://client-hunter.netlify.app",
         "http://localhost:5173",
+        "http://localhost:3000",
+        "https://client-hunter.netlify.app"
     ],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ==============================
-# Paths Setup
-# ==============================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CLIENT_HUNTER_DIR = os.path.join(BASE_DIR, "client_hunter")
-
-# Ensure directory exists (prevents 502 crash)
-os.makedirs(CLIENT_HUNTER_DIR, exist_ok=True)
-
+# Absolute File Paths for Lead Data
 DISCOVERED_LEADS_CSV = os.path.join(CLIENT_HUNTER_DIR, "discovered_leads.csv")
 ANALYZED_LEADS_CSV = os.path.join(CLIENT_HUNTER_DIR, "analyzed_leads.csv")
 FINAL_OUTREACH_CSV = os.path.join(CLIENT_HUNTER_DIR, "final_outreach_list.csv")
 
-
-# ==============================
-# Models
-# ==============================
 class DiscoveryRequest(BaseModel):
     niche: str
     location: str
 
+# Global Exception Handler to capture crashes and prevent 502/CORS issues
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"RUNTIME CRASH at {request.url}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "message": "Internal Server Error", "detail": str(exc)},
+    )
 
-# ==============================
-# Health Check
-# ==============================
 @app.get("/")
-def root():
-    return {"message": "AI Client Hunter API is running"}
+def read_root():
+    return {
+        "message": "AI Client Hunter API is running",
+        "status": "online",
+        "base_dir": BASE_DIR
+    }
 
-
-# ==============================
-# Phase A
-# ==============================
 @app.post("/run/phase-a")
-def run_phase_a(req: DiscoveryRequest):
+async def run_phase_a(req: DiscoveryRequest):
     try:
-        leads = phase_a_discovery.search_businesses(
-            req.niche,
-            req.location,
-            None
-        )
-
+        logger.info(f"Starting Phase A for niche: {req.niche} in {req.location}")
+        leads = phase_a_discovery.search_businesses(req.niche, req.location, None)
+        
         if not leads:
-            return {
-                "status": "success",
-                "message": "No leads found",
-                "count": 0
-            }
-
+            return {"status": "success", "message": "No leads found", "count": 0}
+        
         phase_a_discovery.save_to_csv(leads, DISCOVERED_LEADS_CSV)
-
-        return {
-            "status": "success",
-            "message": f"Found {len(leads)} leads",
-            "count": len(leads)
-        }
-
+        logger.info(f"Phase A completed. Found {len(leads)} leads.")
+        return {"status": "success", "message": f"Found {len(leads)} leads", "count": len(leads)}
     except Exception as e:
-        print("PHASE A ERROR:", str(e))
-        raise HTTPException(status_code=500, detail="Phase A failed")
+        logger.error(f"Phase A Execution Error: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
-
-# ==============================
-# Phase B
-# ==============================
 @app.post("/run/phase-b")
-def run_phase_b():
+async def run_phase_b():
     try:
-        if not os.path.isfile(DISCOVERED_LEADS_CSV):
-            return {"status": "error", "message": "No discovered leads found"}
-
-        phase_b_analyzer.process_leads(
-            DISCOVERED_LEADS_CSV,
-            ANALYZED_LEADS_CSV
-        )
-
-        return {
-            "status": "success",
-            "message": "Website analysis completed"
-        }
-
+        logger.info("Starting Phase B: Website Analysis")
+        phase_b_analyzer.process_leads(DISCOVERED_LEADS_CSV, ANALYZED_LEADS_CSV)
+        return {"status": "success", "message": "Website analysis completed"}
     except Exception as e:
-        print("PHASE B ERROR:", str(e))
-        raise HTTPException(status_code=500, detail="Phase B failed")
+        logger.error(f"Phase B Execution Error: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
-
-# ==============================
-# Phase C
-# ==============================
 @app.post("/run/phase-c")
-def run_phase_c():
+async def run_phase_c():
     try:
-        if not os.path.isfile(ANALYZED_LEADS_CSV):
-            return {"status": "error", "message": "No analyzed leads found"}
-
-        phase_c_outreach.process_final_leads(
-            ANALYZED_LEADS_CSV,
-            FINAL_OUTREACH_CSV
-        )
-
-        return {
-            "status": "success",
-            "message": "Outreach email generation completed"
-        }
-
+        logger.info("Starting Phase C: Outreach Email Generation")
+        phase_c_outreach.process_final_leads(ANALYZED_LEADS_CSV, FINAL_OUTREACH_CSV)
+        return {"status": "success", "message": "Outreach email generation completed"}
     except Exception as e:
-        print("PHASE C ERROR:", str(e))
-        raise HTTPException(status_code=500, detail="Phase C failed")
+        logger.error(f"Phase C Execution Error: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
-
-# ==============================
-# Get Leads (Safe — No 502)
-# ==============================
 @app.get("/leads/{phase}")
-def get_leads(phase: str):
-
+async def get_leads(phase: str):
     file_map = {
         "a": DISCOVERED_LEADS_CSV,
         "b": ANALYZED_LEADS_CSV,
         "c": FINAL_OUTREACH_CSV
     }
-
+    
     file_path = file_map.get(phase.lower())
+    logger.info(f"GET leads request for phase '{phase}'. Resolved path: {file_path}")
 
     if not file_path:
+        logger.warning(f"Invalid phase requested: {phase}")
         return []
 
-    # If file doesn't exist, return empty safely
-    if not os.path.isfile(file_path):
+    # Safe checking of file existence
+    if not os.path.exists(file_path):
+        logger.info(f"Lead file does not exist yet: {file_path}")
         return []
-
+    
     leads = []
-
     try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                leads.append(row)
-
-        return leads
-
+        # Robust CSV reading to prevent crashes
+        with open(file_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            leads = [row for row in reader] # Materialize list immediately
+            logger.info(f"Retrieved {len(leads)} leads from {os.path.basename(file_path)}")
     except Exception as e:
-        print("LEADS READ ERROR:", str(e))
+        logger.error(f"Failed to read CSV at {file_path}", exc_info=True)
+        # Return empty list rather than 502 to maintain frontend stability
         return []
+    
+    return leads
+
+if __name__ == "__main__":
+    import uvicorn
+    # Respect Railway's PORT environment variable
+    port = int(os.environ.get("PORT", 8000))
+    logger.info(f"Uvicorn starting on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
