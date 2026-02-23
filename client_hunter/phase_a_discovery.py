@@ -11,18 +11,15 @@ def get_api_key():
     # Try environment variable first
     key = os.getenv("SERPER_API_KEY")
     if not key:
-        print("\n" + "="*50)
-        print("SERPER API KEY REQUIRED")
-        print("="*50)
-        print("To search for leads, you need a free Google Search API key.")
-        print("1. Go to https://serper.dev/")
-        print("2. Sign up for a free account (gives you 2,500 free searches)")
-        print("3. Paste your API key below:")
-        key = input("> ").strip()
+        print("\n[!] SERPER_API_KEY NOT FOUND IN ENVIRONMENT")
+        return None
     return key
 
-def search_organic(query, location, api_key):
+def search_organic(query, location, api_key=None):
     """Fallback: Search for businesses via organic Google Search."""
+    if not api_key:
+        api_key = get_api_key()
+    
     url = "https://google.serper.dev/search"
     payload = json.dumps({
         "q": f"{query} {location} website",
@@ -64,8 +61,11 @@ def search_organic(query, location, api_key):
     except Exception:
         return []
 
-def search_businesses(query, location, api_key):
+def search_businesses(query, location, api_key=None):
     """Search for businesses using Google Search via Serper API."""
+    if not api_key:
+        api_key = get_api_key()
+        
     url = "https://google.serper.dev/places"
     
     # Attempt to detect country for better results (default to US)
