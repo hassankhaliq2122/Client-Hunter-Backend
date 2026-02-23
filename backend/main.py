@@ -15,11 +15,11 @@ import phase_c_outreach
 
 app = FastAPI()
 
-# Enable CORS for frontend development
+# Enable CORS for production
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
