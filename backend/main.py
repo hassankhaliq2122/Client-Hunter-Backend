@@ -18,9 +18,12 @@ app = FastAPI()
 # Enable CORS for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_origins=["https://client-hunter.netlify.app"],
-    allow_credentials=False,
+    allow_origins=[
+        "https://client-hunter.netlify.app",
+        "http://localhost:5173",  # if using Vite
+        
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
